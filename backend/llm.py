@@ -6,9 +6,13 @@ import os
 from fastapi import FastAPI, HTTPException
 from enum import Enum
 import re
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 # Environment variables
-os.environ["GROQ_API_KEY"] = "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"
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 app = FastAPI()
 client = Groq()
