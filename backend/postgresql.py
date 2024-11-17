@@ -1,107 +1,294 @@
+# database.py
 import psycopg2
 from datetime import datetime
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
-import gridfs
+from typing import Dict, Optional
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Database connection strings
+POSTGRES_URL = os.getenv("POSTGRES_URL",
+                         "postgresql://maindb_owner:G03JPyoDbQhx@ep-empty-paper-a2mflvxi.eu-central-1.aws.neon.tech/maindb?sslmode=require")
+MONGO_URI = os.getenv("MONGO_URI",
+                      "mongodb+srv://nutrillama:Q9OuXiA6kbtbZQd2@nutrillama.yc7vv.mongodb.net/?retryWrites=true&w=majority&appName=NutriLlama")
+
+# MongoDB setup
+mongo_client = MongoClient(MONGO_URI, server_api=ServerApi('1'))
+db = mongo_client['image_database']
+image_collection = db['imageCollection']
 
 
-def example():
-  POSTGRES_URL = "postgresql://maindb_owner:G03JPyoDbQhx@ep-empty-paper-a2mflvxi.eu-central-1.aws.neon.tech/maindb?sslmode=require"
-  try:
-      # Connect to PostgreSQL
-      conn = psycopg2.connect(POSTGRES_URL)
-      cur = conn.cursor()
+def init_database():
+    """Initialize database tables."""
+    try:
+        conn = psycopg2.connect(POSTGRES_URL)
+        cur = conn.cursor()
 
-      # Create table with compound primary key
-      create_table_query = """
-      CREATE TABLE IF NOT EXISTS phone_logs (
-          phone_no VARCHAR(15),
-          log_time TIMESTAMP,
-          attribute VARCHAR(1000),
-          PRIMARY KEY (phone_no, log_time)
-      );
-      """
-      cur.execute(create_table_query)
-      conn.commit()
+        # Create users table with health_goal field
+        create_users_table = """
+        CREATE TABLE IF NOT EXISTS users (
+            user_id SERIAL PRIMARY KEY,
+            phone_number VARCHAR(15) UNIQUE NOT NULL,
+            name VARCHAR(100) NOT NULL,
+            health_goal TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
 
-      # Insert a sample record
-      insert_query = """
-      INSERT INTO phone_logs (phone_no, log_time, attribute)
-      VALUES (%s, %s, %s);
-      """
-      cur.execute(insert_query, ('+1234567890', '2024-11-16 10:30:00', 'Sample Attribute'))
-      conn.commit()
+        # Create meals table
+        create_meals_table = """
+        CREATE TABLE IF NOT EXISTS meals (
+            meal_id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(user_id),
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            meal_name VARCHAR(100),
+            image_url VARCHAR(500),
+            estimated_calories FLOAT,
+            glycemic_index FLOAT,
+            health_rating INTEGER CHECK (health_rating BETWEEN 0 AND 10),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
 
-      # Fetch records
-      cur.execute("SELECT * FROM phone_logs;")
-      rows = cur.fetchall()
-      for row in rows:
-          print(row)
+        # Execute creation queries
+        cur.execute(create_users_table)
+        cur.execute(create_meals_table)
+        conn.commit()
 
-      # Close the connection
-      cur.close()
-      conn.close()
+        print("Database tables created successfully!")
 
-  except Exception as e:
-      print("Error:", e)
+    except Exception as e:
+        print(f"Error initializing database: {e}")
+        raise
+
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
 
-# Get current time
-current_time = datetime.now()
+class UserManager:
+    @staticmethod
+    def create_user(phone_number: str, name: str, health_goal: str = None) -> int:
+        """Create a new user and return user_id."""
+        try:
+            conn = psycopg2.connect(POSTGRES_URL)
+            cur = conn.cursor()
 
-# Format as a string (optional, PostgreSQL accepts datetime objects)
-formatted_time = current_time.strftime('%Y-%m-%d %H:%M:%S')
+            insert_query = """
+            INSERT INTO users (phone_number, name, health_goal)
+            VALUES (%s, %s, %s)
+            RETURNING user_id;
+            """
 
-print(formatted_time)  # Example: "2024-11-16 14:30:45"
+            cur.execute(insert_query, (phone_number, name, health_goal))
+            user_id = cur.fetchone()[0]
+            conn.commit()
 
-def getCurTime():
-  # Get current time
-  current_time = datetime.now()
+            return user_id
 
-  # Format as a string (optional, PostgreSQL accepts datetime objects)
-  return current_time.strftime('%Y-%m-%d %H:%M:%S')
+        except Exception as e:
+            print(f"Error creating user: {e}")
+            raise
 
-uri = "mongodb+srv://nutrillama:Q9OuXiA6kbtbZQd2@nutrillama.yc7vv.mongodb.net/?retryWrites=true&w=majority&appName=NutriLlama"
+        finally:
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
 
-# Create a new client and connect to the server
-client = MongoClient(uri, server_api=ServerApi('1'))
+    @staticmethod
+    def update_health_goal(user_id: int, new_goal: str) -> bool:
+        """Update a user's health goal."""
+        try:
+            conn = psycopg2.connect(POSTGRES_URL)
+            cur = conn.cursor()
 
-# Send a ping to confirm a successful connection
-try:
-    client.admin.command('ping')
-    print("Pinged your deployment. You successfully connected to MongoDB!")
-except Exception as e:
-    print(e)
+            update_query = """
+            UPDATE users
+            SET health_goal = %s
+            WHERE user_id = %s
+            RETURNING user_id;
+            """
 
-# Connect to MongoDB
-db = client['image_database']  # database name
-imageCollection = db['imageCollection']  # Replace with the collection name
+            cur.execute(update_query, (new_goal, user_id))
+            updated = cur.fetchone() is not None
+            conn.commit()
 
-fs = gridfs.GridFS(db)
+            return updated
 
-# DONT USE THIS USE THE COLLECTIONS FUNCTIONS BELOW
-def image_example():
-  # Open and read the image
-  with open('example.jpg', 'rb') as file:
-      image_data = file.read()
+        except Exception as e:
+            print(f"Error updating health goal: {e}")
+            raise
 
-  # Store the image in GridFS
-  file_id = fs.put(image_data, filename='example.jpg', description='A sample image')
+        finally:
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
 
-  # Retrieve the image
-  stored_file = fs.get(file_id)
-  with open('output_example.jpg', 'wb') as output_file:
-      output_file.write(stored_file.read())
+    @staticmethod
+    def get_user_by_phone(phone_number: str) -> Optional[Dict]:
+        """Get user details by phone number."""
+        try:
+            conn = psycopg2.connect(POSTGRES_URL)
+            cur = conn.cursor()
 
-  print(f"Image stored with ID: {file_id}")
+            select_query = """
+            SELECT user_id, phone_number, name, health_goal, created_at
+            FROM users
+            WHERE phone_number = %s;
+            """
 
-def store_image(phoneNo, jpgImage):
-  return imageCollection.insert_one({
-    'filename': phoneNo+getCurTime(),
-    'jpgImage': jpgImage
-  })
+            cur.execute(select_query, (phone_number,))
+            user = cur.fetchone()
 
-def get_images(phoneNo):
-  # Query to find documents where the 'filename' field starts with 'example'
-  return imageCollection.find({"filename": {"$regex": f"^{phoneNo}", "$options": "i"}})
-  
+            if user:
+                return {
+                    "user_id": user[0],
+                    "phone_number": user[1],
+                    "name": user[2],
+                    "health_goal": user[3],
+                    "created_at": user[4]
+                }
+            return None
+
+        finally:
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
+
+
+class MealManager:
+    @staticmethod
+    def record_meal(
+            user_id: int,
+            meal_name: str,
+            image_url: Optional[str],
+            estimated_calories: float,
+            glycemic_index: float,
+            health_rating: int
+    ) -> int:
+        """Record a meal and return meal_id."""
+        try:
+            conn = psycopg2.connect(POSTGRES_URL)
+            cur = conn.cursor()
+
+            insert_query = """
+            INSERT INTO meals (
+                user_id, meal_name, image_url, estimated_calories,
+                glycemic_index, health_rating
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING meal_id;
+            """
+
+            cur.execute(insert_query, (
+                user_id, meal_name, image_url, estimated_calories,
+                glycemic_index, health_rating
+            ))
+            meal_id = cur.fetchone()[0]
+            conn.commit()
+
+            return meal_id
+
+        except Exception as e:
+            print(f"Error recording meal: {e}")
+            raise
+
+        finally:
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
+
+    @staticmethod
+    def get_user_meals_today(user_id: int) -> Dict:
+        """Get all meals for a user from the current day."""
+        try:
+            conn = psycopg2.connect(POSTGRES_URL)
+            cur = conn.cursor()
+
+            select_query = """
+            SELECT 
+                meal_id, 
+                timestamp, 
+                meal_name, 
+                image_url,
+                estimated_calories, 
+                glycemic_index, 
+                health_rating
+            FROM meals
+            WHERE 
+                user_id = %s 
+                AND DATE(timestamp) = CURRENT_DATE
+            ORDER BY timestamp ASC;
+            """
+
+            cur.execute(select_query, (user_id,))
+            meals = cur.fetchall()
+
+            total_calories = 0
+            total_meals = len(meals)
+            meals_data = []
+
+            for meal in meals:
+                meal_dict = {
+                    "meal_id": meal[0],
+                    "timestamp": meal[1],
+                    "meal_name": meal[2],
+                    "image_url": meal[3],
+                    "estimated_calories": meal[4],
+                    "glycemic_index": meal[5],
+                    "health_rating": meal[6]
+                }
+                meals_data.append(meal_dict)
+                total_calories += meal[4] if meal[4] is not None else 0
+
+            return {
+                "meals": meals_data,
+                "summary": {
+                    "total_meals": total_meals,
+                    "total_calories": total_calories,
+                    "date": datetime.now().date().isoformat()
+                }
+            }
+
+        except Exception as e:
+            print(f"Error fetching today's meals: {e}")
+            raise
+
+        finally:
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
+
+
+def store_image_and_get_url(phone_number: str, image_data: bytes) -> str:
+    """Store image in MongoDB and return URL-like reference."""
+    try:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"{phone_number}_{timestamp}"
+
+        result = image_collection.insert_one({
+            'filename': filename,
+            'jpgImage': image_data,
+            'uploaded_at': datetime.now()
+        })
+
+        return f"mongodb://image_database/{str(result.inserted_id)}"
+
+    except Exception as e:
+        print(f"Error storing image: {e}")
+        raise
+
+
+# Initialize database if running directly
+if __name__ == "__main__":
+    init_database()
