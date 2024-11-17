@@ -137,5 +137,37 @@ def image_to_base64(image_path):
         encoded_image = base64.b64encode(image_file.read()).decode("utf-8")
     return encoded_image
 
+@app.route("/get_patient_data", methods=["GET"])
+def get_patient_data():
+    """API to fetch patient data including user and meals information."""
+    try:
+        # Extract phone_number from the query parameters
+        phone_number = request.args.get("phone_number")
+        if not phone_number:
+            return jsonify({"status": "error", "message": "Missing phone_number parameter"}), 400
+
+        # Fetch user details
+        user = postgresql.UserManager.get_user_by_phone(phone_number)
+        if not user:
+            return jsonify({"status": "error", "message": "User not found"}), 404
+
+        # Fetch meals for the user today
+        meals_data = postgresql.MealManager.get_user_meals_today(user_id=user["user_id"])
+
+        # Construct response payload
+        response_data = {
+            "status": "success",
+            "user": user,
+            "meals": meals_data.get("meals", []),
+            "summary": meals_data.get("summary", {})
+        }
+
+        return jsonify(response_data), 200
+
+    except Exception as e:
+        logging.error(f"Error fetching patient data: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 if __name__ == "__main__":
     app.run(port=5000, debug=True)

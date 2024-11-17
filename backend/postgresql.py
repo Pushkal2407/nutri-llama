@@ -269,6 +269,35 @@ class MealManager:
             if conn:
                 conn.close()
 
+def get_patient_data(phone_number: str) -> Dict:
+    """
+    Fetch patient data including user details and meals information.
+
+    :param phone_number: The phone number of the user.
+    :return: A dictionary containing user details and meals data.
+    """
+    try:
+        # Get user details by phone number
+        user = UserManager.get_user_by_phone(phone_number)
+        if not user:
+            raise ValueError(f"User with phone number {phone_number} not found")
+
+        # Get user's meals for today
+        meals_data = MealManager.get_user_meals_today(user["user_id"])
+
+        # Combine user details and meals into a single response
+        patient_data = {
+            "user": user,
+            "meals": meals_data.get("meals", []),
+            "summary": meals_data.get("summary", {})
+        }
+
+        return patient_data
+
+    except Exception as e:
+        print(f"Error fetching patient data: {e}")
+        raise
+
 
 def store_image_and_get_url(phone_number: str, image_data: bytes) -> str:
     """Store image in MongoDB and return URL-like reference."""
